@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>DitherQuick</title>
+    <link
+      rel="stylesheet"
+      href="https://unpkg.com/tachyons@4.12.0/css/tachyons.min.css"
+    />
+  </head>
+  <body class="sans-serif pa4 mw7 center">
+    <h1 class="f2 tc">DitherQuick</h1>
+    <div
+      id="dropZone"
+      class="ba b--dashed bw2 b--light-gray br3 pa4 tc mv4 w-100 w-two-thirds-ns center"
+    >
+      <p class="ma0">Drag and drop an image here, or click to select a file</p>
+      <input type="file" id="fileInput" accept="image/*" class="dn" />
+    </div>
+    <div class="mv3 flex items-center justify-center">
+      <label for="resizeWidth" class="mr2">Resize Width:</label>
+      <input
+        type="number"
+        id="resizeWidth"
+        value="300"
+        min="1"
+        max="1000"
+        class="input-reset ba b--black-20 pa2 m0 dib w-100 w-50-ns"
+      />
+    </div>
+    <div class="mv3 flex items-center justify-center">
+      <label for="ditheringMethod" class="mr2">Dithering Method:</label>
+      <select
+        id="ditheringMethod"
+        class="input-reset ba b--black-20 pa2 m0 dib w-100 w-50-ns"
+      >
+        <option value="bayer2x2">Bayer 2x2</option>
+        <option value="bayer4x4">Bayer 4x4</option>
+        <option value="ordered8x8">Bayer 8x8</option>
+        <option value="atkinson">Atkinson</option>
+        <option value="floydSteinberg">Floyd-Steinberg</option>
+      </select>
+    </div>
+    <div class="tc">
+      <button
+        id="processBtn"
+        class="f6 link dim br2 ph3 pv2 mb2 dib white bg-dark-blue"
+      >
+        Process Image
+      </button>
+    </div>
+    <div id="output" class="mt4 flex items-center justify-center"></div>
+    <div id="dataUrlContainer" class="mt4 dn">
+      <div class="flex items-center">
+        <input
+          type="text"
+          id="dataUrlInput"
+          readonly
+          class="input-reset ba b--black-20 pa2 mb2 w-100 mr2"
+          onclick="this.select(); document.execCommand('copy');"
+        />
+        <button
+          id="copyDataUrlBtn"
+          class="f6 link dim br2 ph3 pv2 mb2 dib white bg-dark-green"
+        >
+          Copy Text
+        </button>
+      </div>
+    </div>
+
+    <script>
+      const dropZone = document.getElementById("dropZone");
+      const fileInput = document.getElementById("fileInput");
+      const resizeWidthInput = document.getElementById("resizeWidth");
+      const ditheringMethodSelect = document.getElementById("ditheringMethod");
+      const processBtn = document.getElementById("processBtn");
+      const copyDataUrlBtn = document.getElementById("copyDataUrlBtn");
+      const output = document.getElementById("output");
+      const dataUrlContainer = document.getElementById("dataUrlContainer");
+      const dataUrlInput = document.getElementById("dataUrlInput");
+
+      let originalImage = null;
+
+      dropZone.addEventListener("click", () => fileInput.click());
+      dropZone.addEventListener("dragover", (e) => e.preventDefault());
+      dropZone.addEventListener("drop", handleDrop);
+      fileInput.addEventListener("change", handleFileSelect);
+      processBtn.addEventListener("click", processImage);
+      copyDataUrlBtn.addEventListener("click", copyDataUrl);
+      dataUrlInput.addEventListener("click", () => {
+        dataUrlInput.select();
+        document.execCommand("copy");
+        alert("Data URL copied to clipboard!");
+      });
+
+      function handleDrop(e) {
+        e.preventDefault();
+        const file = e.dataTransfer.files[0];
+        if (file && file.type.startsWith("image/")) {
+          loadImage(file);
+        }
+      }
+
+      function handleFileSelect(e) {
+        const file = e.target.files[0];
+        if (file && file.type.startsWith("image/")) {
+          loadImage(file);
+        }
+      }
+
+      function loadImage(file) {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+          originalImage = new Image();
+          originalImage.onload = () => {
+            output.innerHTML =
+              '<p class="tc">Image loaded. Click "Process Image" to apply dithering.</p>';
+            output.appendChild(originalImage);
+            originalImage.className = "mw-100 h-auto";
+            updateDataUrl(e.target.result);
+          };
+          originalImage.src = e.target.result;
+        };
+        reader.readAsDataURL(file);
+      }
+
+      function processImage() {
+        if (!originalImage) {
+          alert("Please select an image first.");
+          return;
+        }
+
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
+
+        const resizeWidth = parseInt(resizeWidthInput.value);
+        const resizeHeight = Math.floor(
+          originalImage.height * (resizeWidth / originalImage.width)
+        );
+
+        canvas.width = resizeWidth;
+        canvas.height = resizeHeight;
+
+        ctx.drawImage(originalImage, 0, 0, resizeWidth, resizeHeight);
+        const imageData = ctx.getImageData(0, 0, resizeWidth, resizeHeight);
+        const pixels = imageData.data;
+
+        // Convert to grayscale
+        for (let i = 0; i < pixels.length; i += 4) {
+          const avg = (pixels[i] + pixels[i + 1] + pixels[i + 2]) / 3;
+          pixels[i] = pixels[i + 1] = pixels[i + 2] = avg;
+        }
+
+        // Apply dithering
+        const method = ditheringMethodSelect.value;
+        switch (method) {
+          case "bayer2x2":
+            applyBayerDithering(pixels, resizeWidth, resizeHeight, 2);
+            break;
+          case "bayer4x4":
+            applyBayerDithering(pixels, resizeWidth, resizeHeight, 4);
+            break;
+          case "atkinson":
+            applyAtkinsonDithering(pixels, resizeWidth, resizeHeight);
+            break;
+          case "floydSteinberg":
+            applyFloydSteinbergDithering(pixels, resizeWidth, resizeHeight);
+            break;
+          case "ordered8x8":
+            applyOrderedDithering(pixels, resizeWidth, resizeHeight);
+            break;
+        }
+
+        ctx.putImageData(imageData, 0, 0);
+
+        output.innerHTML = "";
+        const img = new Image();
+        img.src = canvas.toDataURL();
+        img.className = "mw-100 h-auto";
+        output.appendChild(img);
+        updateDataUrl(img.src);
+      }
+
+      function applyBayerDithering(pixels, width, height, matrixSize) {
+        const bayerMatrix =
+          matrixSize === 2
+            ? [
+                [0, 2],
+                [3, 1],
+              ]
+            : [
+                [0, 8, 2, 10],
+                [12, 4, 14, 6],
+                [3, 11, 1, 9],
+                [15, 7, 13, 5],
+              ];
+
+        const threshold = matrixSize === 2 ? 4 : 16;
+
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const old = pixels[i];
+            const threshold =
+              (bayerMatrix[y % matrixSize][x % matrixSize] + 1) /
+              (matrixSize * matrixSize + 1);
+            const newPixel = old < threshold * 255 ? 0 : 255;
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = newPixel;
+          }
+        }
+      }
+
+      function applyAtkinsonDithering(pixels, width, height) {
+        const serpentine = true;
+        for (let y = 0; y < height; y++) {
+          const direction = serpentine ? ((y & 1) === 0 ? 1 : -1) : 1;
+          for (
+            let x1 = direction === 1 ? 0 : width - 1;
+            direction === 1 ? x1 < width : x1 >= 0;
+            x1 += direction
+          ) {
+            const i = (y * width + x1) * 4;
+            const old = pixels[i];
+            const newPixel = old < 128 ? 0 : 255;
+            const error = Math.floor((old - newPixel) / 8);
+
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = newPixel;
+
+            const diffuseError = (x, y) => {
+              if (x >= 0 && x < width && y >= 0 && y < height) {
+                const j = (y * width + x) * 4;
+                pixels[j] = Math.min(255, Math.max(0, pixels[j] + error));
+                pixels[j + 1] = pixels[j + 2] = pixels[j];
+              }
+            };
+
+            diffuseError(x1 + direction, y);
+            diffuseError(x1 + direction * 2, y);
+            diffuseError(x1 - direction, y + 1);
+            diffuseError(x1, y + 1);
+            diffuseError(x1 + direction, y + 1);
+            diffuseError(x1, y + 2);
+          }
+        }
+      }
+
+      function applyFloydSteinbergDithering(pixels, width, height) {
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const oldPixel = pixels[i];
+            const newPixel = oldPixel < 128 ? 0 : 255;
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = newPixel;
+            const error = oldPixel - newPixel;
+
+            if (x + 1 < width) {
+              pixels[i + 4] += (error * 7) / 16;
+            }
+            if (y + 1 < height) {
+              if (x > 0) {
+                pixels[i + 4 * (width - 1)] += (error * 3) / 16;
+              }
+              pixels[i + 4 * width] += (error * 5) / 16;
+              if (x + 1 < width) {
+                pixels[i + 4 * (width + 1)] += (error * 1) / 16;
+              }
+            }
+          }
+        }
+      }
+
+      function applyOrderedDithering(pixels, width, height) {
+        const orderedMatrix = [
+          [0, 48, 12, 60, 3, 51, 15, 63],
+          [32, 16, 44, 28, 35, 19, 47, 31],
+          [8, 56, 4, 52, 11, 59, 7, 55],
+          [40, 24, 36, 20, 43, 27, 39, 23],
+          [2, 50, 14, 62, 1, 49, 13, 61],
+          [34, 18, 46, 30, 33, 17, 45, 29],
+          [10, 58, 6, 54, 9, 57, 5, 53],
+          [42, 26, 38, 22, 41, 25, 37, 21],
+        ];
+
+        for (let y = 0; y < height; y++) {
+          for (let x = 0; x < width; x++) {
+            const i = (y * width + x) * 4;
+            const old = pixels[i];
+            const threshold = (orderedMatrix[y % 8][x % 8] + 1) / 65;
+            const newPixel = old < threshold * 255 ? 0 : 255;
+            pixels[i] = pixels[i + 1] = pixels[i + 2] = newPixel;
+          }
+        }
+      }
+
+      function updateDataUrl(dataUrl) {
+        dataUrlInput.value = dataUrl;
+        dataUrlContainer.classList.remove("dn");
+      }
+
+      function copyDataUrl() {
+        dataUrlInput.select();
+        document.execCommand("copy");
+        alert("Data URL copied to clipboard!");
+      }
+    </script>
+  </body>
+</html>
